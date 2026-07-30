@@ -3,3 +3,4 @@
 /vite.config.ts
 /postcss.config.mjs
 /package-lock.json
+/backend/venv
