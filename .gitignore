@@ -4,3 +4,7 @@
 /postcss.config.mjs
 /package-lock.json
 /backend/venv
+__pycache__/
+*.pyc
+.env
+env/
