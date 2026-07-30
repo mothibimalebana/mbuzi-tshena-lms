@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: microfinance_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-microfinance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-microfinance_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-microfinance_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-microfinance} -d ${POSTGRES_DB:-microfinance_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: microfinance_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  flask-api:
+    build: .
+    container_name: microfinance_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-microfinance}:${POSTGRES_PASSWORD:-microfinance_pw}@postgres:5432/${POSTGRES_DB:-microfinance_db}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+
+volumes:
+  pgdata:
