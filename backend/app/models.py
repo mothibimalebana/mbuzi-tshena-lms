@@ -90,7 +90,17 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    applications: Mapped[List["LoanApplication"]] = relationship("LoanApplication", back_populates="user")
+    applications: Mapped[list["LoanApplication"]] = relationship(
+    "LoanApplication",
+    back_populates="user",
+    foreign_keys="LoanApplication.user_id",
+    )
+
+    reviewed_applications: Mapped[list["LoanApplication"]] = relationship(
+        "LoanApplication",
+        back_populates="reviewer",
+        foreign_keys="LoanApplication.reviewed_by",
+    )
     loans: Mapped[List["Loan"]] = relationship("Loan", back_populates="user")
     payments: Mapped[List["Payment"]] = relationship("Payment", back_populates="user")
 
@@ -164,7 +174,17 @@ class LoanApplication(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    user: Mapped["User"] = relationship("User", back_populates="applications", foreign_keys=[user_id])
+    user: Mapped["User"] = relationship(
+    "User",
+    back_populates="applications",
+    foreign_keys=[user_id],
+    )
+
+    reviewer: Mapped[Optional["User"]] = relationship(
+        "User",
+        back_populates="reviewed_applications",
+        foreign_keys=[reviewed_by],
+    )
     documents: Mapped[List["Document"]] = relationship("Document", back_populates="application")
     loan: Mapped[Optional["Loan"]] = relationship("Loan", back_populates="application", uselist=False)
 
