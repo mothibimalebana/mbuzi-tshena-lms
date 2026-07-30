@@ -1,5 +1,4 @@
 /dist
 /node_modules
-/postcss.config.mjs
 /package-lock.json
 /backend/venv
