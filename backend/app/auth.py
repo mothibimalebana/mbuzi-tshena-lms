@@ -11,6 +11,10 @@ from app.database import get_db
 from app.models import User, UserRole
 from app.schemas import TokenData
 
+from fastapi import Depends, HTTPException, Cookie, status 
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -71,19 +75,44 @@ def authenticate_user(db: Session, identifier: str, password: str) -> Optional[U
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    access_token: str | None = Cookie(default=None),
     db: Session = Depends(get_db),
 ) -> User:
-    token_data = decode_token(token)
-    user = get_user_by_email(db, email=token_data.email)
+    if access_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    try:
+        payload = jwt.decode(
+            access_token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
+
+        email: str | None = payload.get("sub")
+
+        if email is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+            )
+
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    user = db.query(User).filter(User.email == email).first()
+
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
         )
-    if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+
     return user
 
 
@@ -95,9 +124,13 @@ async def get_current_active_borrower(
     return current_user
 
 
-async def get_current_admin(
+def get_current_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Admin access required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required.",
+        )
+
     return current_user

@@ -1,5 +1,5 @@
-import { Outlet, NavLink } from "react-router";
-import { useState } from "react";
+import { Outlet, NavLink, useNavigate } from "react-router";
+import { useState, useEffect } from "react";
 import { 
   LayoutDashboard, 
   FileText, 
@@ -14,7 +14,50 @@ import clsx from "clsx";
 import { Logo } from "../components/Logo";
 
 export default function DashboardLayout() {
+  const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutMessage, setLogoutMessage] = useState("");
+
+  useEffect(() => {
+    const storedUser = sessionStorage.getItem("user");
+
+    if (storedUser) {
+      setUser(JSON.parse(storedUser));
+    }
+  }, []);
+
+  const handleLogout = async () => {
+  try {
+    setLoggingOut(true);
+    setLogoutMessage("");
+
+    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+
+    const data = await res.json();
+
+    setLogoutMessage(data.message);
+
+    if (!res.ok) {
+      throw new Error(data.message || "Logout failed");
+    }
+
+    // Give the user a moment to see the success message
+    setTimeout(() => {
+      sessionStorage.removeItem("user");
+      navigate("/admin/login", { replace: true });
+    }, 1000);
+
+  } catch (err: any) {
+    setLogoutMessage(err.message || "Unable to log out.");
+  } finally {
+    setLoggingOut(false);
+  }
+};
   
   const navItems = [
     { name: "Overview", path: "/admin", icon: LayoutDashboard, exact: true },
@@ -77,10 +120,35 @@ export default function DashboardLayout() {
             <Settings className="w-5 h-5" />
             Settings
           </button>
-          <NavLink to="/admin/login" className="flex items-center gap-3 px-4 py-3 text-sm font-medium text-white/80 hover:text-white hover:bg-[#00432E]/50 rounded-lg w-full transition-colors mt-1">
+
+          {logoutMessage && (
+      <div
+        className={`mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium ${
+          loggingOut
+            ? "bg-blue-50 text-blue-700"
+            : "bg-green-50 text-green-700"
+        }`}
+      >
+        {logoutMessage}
+      </div>
+    )}
+          <button
+        onClick={handleLogout}
+        disabled={loggingOut}
+        className="flex items-center gap-3 px-4 py-3 text-sm font-medium text-white/80 hover:text-white hover:bg-[#00432E]/50 rounded-lg w-full transition-colors mt-1 disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        {loggingOut ? (
+          <>
+            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Signing out...
+          </>
+        ) : (
+          <>
             <LogOut className="w-5 h-5" />
             Log Out
-          </NavLink>
+          </>
+        )}
+      </button>
         </div>
       </aside>
 
@@ -107,8 +175,13 @@ export default function DashboardLayout() {
                 AO
               </div>
               <div className="flex flex-col hidden sm:flex">
-                <span className="text-sm font-bold text-[#111827]">Admin Officer</span>
-                <span className="text-xs text-gray-500 font-medium">Risk Department</span>
+                <span className="text-sm font-bold text-[#111827]">
+            {user?.full_name ?? "Loading..."}
+          </span>
+
+          <span className="text-xs text-gray-500 font-medium">
+            {user?.role ?? ""}
+          </span>
               </div>
             </div>
           </div>

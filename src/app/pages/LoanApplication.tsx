@@ -1,21 +1,20 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { 
-  Bell, 
-  LogOut, 
+import { useNavigate } from "react-router";
+import {
+  Bell,
+  LogOut,
   ArrowLeft,
   ArrowRight,
   Upload,
   CheckCircle2,
   AlertCircle,
   FileText,
+  Loader2,
   DollarSign,
-  Calendar,
   Briefcase,
   Home,
   Users,
   CreditCard,
-  Building2
 } from "lucide-react";
 import { Logo } from "../components/Logo";
 import { useForm } from "react-hook-form";
@@ -23,12 +22,21 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { toast } from "sonner";
 
+const API_URL = import.meta.env.VITE_API_URL;
+
+const MAX_FILE_SIZE_MB = 10;
+const ALLOWED_FILE_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/jpg",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+];
+
 interface LoanFormData {
-  // Personal Information
   fullName: string;
   idNumber: string;
   dateOfBirth: string;
@@ -36,59 +44,94 @@ interface LoanFormData {
   email: string;
   maritalStatus: string;
   dependents: string;
-  
-  // Address Information
+
   residentialAddress: string;
   city: string;
   province: string;
   postalCode: string;
   yearsAtAddress: string;
   residentialStatus: string;
-  
-  // Employment Information
+
   employmentStatus: string;
   employerName: string;
   employerAddress: string;
   occupation: string;
   monthlyIncome: string;
   yearsEmployed: string;
-  
-  // Loan Details
+
   loanAmount: string;
   loanPurpose: string;
   loanType: string;
   repaymentTerm: string;
-  
-  // Banking Information
+
   bankName: string;
   accountNumber: string;
   accountType: string;
-  
-  // References
+
   reference1Name: string;
   reference1Phone: string;
   reference1Relationship: string;
   reference2Name: string;
   reference2Phone: string;
   reference2Relationship: string;
-  
-  // Additional Information
+
   monthlyExpenses: string;
   existingLoans: string;
   additionalInfo: string;
 }
 
+// --- API helpers -----------------------------------------------------------
+
+async function parseApiError(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json();
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail)) {
+      return data.detail.map((d: any) => d.msg ?? String(d)).join(" ");
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function uploadDocument(applicationId: number, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_URL}/api/documents/upload/${applicationId}`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const message = await parseApiError(res, `Failed to upload ${file.name}`);
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// -----------------------------------------------------------------------------
+
 export default function LoanApplication() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
-  const [uploadedDocs, setUploadedDocs] = useState<string[]>([]);
-  
-  const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<LoanFormData>();
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Mock user data
-  const user = {
-    name: "Sipho",
-  };
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoanFormData>();
+
+  const user = { name: "Sipho" };
 
   const totalSteps = 6;
   const progressPercent = (currentStep / totalSteps) * 100;
@@ -104,37 +147,145 @@ export default function LoanApplication() {
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
-    if (files) {
-      const fileNames = Array.from(files).map(file => file.name);
-      setUploadedDocs(prev => [...prev, ...fileNames]);
-      toast.success(`${fileNames.length} document(s) uploaded successfully`);
+    if (!files) return;
+
+    const accepted: File[] = [];
+    let rejectedCount = 0;
+
+    Array.from(files).forEach((file) => {
+      const validType = ALLOWED_FILE_TYPES.includes(file.type);
+      const validSize = file.size <= MAX_FILE_SIZE_MB * 1024 * 1024;
+      if (validType && validSize) {
+        accepted.push(file);
+      } else {
+        rejectedCount += 1;
+      }
+    });
+
+    if (accepted.length > 0) {
+      setUploadedFiles((prev) => [...prev, ...accepted]);
+      toast.success(`${accepted.length} document(s) added`);
     }
+    if (rejectedCount > 0) {
+      toast.error(
+        `${rejectedCount} file(s) skipped — only PDF, JPG, PNG, DOC, DOCX under ${MAX_FILE_SIZE_MB}MB are allowed`
+      );
+    }
+
+    // allow re-selecting the same file later
+    event.target.value = "";
   };
 
   const removeDocument = (index: number) => {
-    setUploadedDocs(prev => prev.filter((_, i) => i !== index));
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
     toast.info("Document removed");
   };
 
-  const onSubmit = (data: LoanFormData) => {
-    console.log("Loan Application Submitted:", data);
-    toast.success("Your loan application has been submitted successfully! We'll review it within 24 hours.");
-    setTimeout(() => {
-      navigate("/confirm");
-    }, 2000);
+  const onSubmit = async (data: LoanFormData) => {
+   
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        full_name: data.fullName,
+        id_number: data.idNumber,
+        date_of_birth: data.dateOfBirth,
+        phone_number: data.phoneNumber,
+        email: data.email,
+        marital_status: data.maritalStatus,
+        dependents: parseInt(data.dependents, 10),
+
+        residential_address: data.residentialAddress,
+        city: data.city,
+        province: data.province,
+        postal_code: data.postalCode,
+        years_at_address: parseFloat(data.yearsAtAddress),
+        residential_status: data.residentialStatus,
+
+        employment_status: data.employmentStatus,
+        employer_name: data.employerName,
+        employer_address: data.employerAddress,
+        occupation: data.occupation,
+        monthly_income: parseFloat(data.monthlyIncome),
+        years_employed: parseFloat(data.yearsEmployed),
+
+        loan_amount: parseFloat(data.loanAmount),
+        loan_purpose: data.loanPurpose,
+        loan_type: data.loanType,
+        repayment_term: parseInt(data.repaymentTerm, 10),
+
+        bank_name: data.bankName,
+        account_number: data.accountNumber,
+        account_type: data.accountType,
+
+        reference1_name: data.reference1Name,
+        reference1_phone: data.reference1Phone,
+        reference1_relationship: data.reference1Relationship,
+        reference2_name: data.reference2Name,
+        reference2_phone: data.reference2Phone,
+        reference2_relationship: data.reference2Relationship,
+
+        monthly_expenses: data.monthlyExpenses ? parseFloat(data.monthlyExpenses) : null,
+        existing_loans: data.existingLoans || null,
+        additional_info: data.additionalInfo || null,
+      };
+
+      console.log("submitting...")
+
+      const res = await fetch(`${API_URL}/api/applications`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.status === 401) {
+        toast.error("Your session has expired. Please log in again.");
+        navigate("/login");
+        return;
+      }
+
+      if (!res.ok) {
+        const message = await parseApiError(res, "Failed to submit application.");
+        toast.error(message);
+        return;
+      }
+
+      const application = await res.json();
+
+      if (uploadedFiles.length > 0) {
+        const results = await Promise.allSettled(
+          uploadedFiles.map((file) => uploadDocument(application.id, file))
+        );
+        const failed = results.filter((r) => r.status === "rejected").length;
+        if (failed > 0) {
+          toast.error(
+            `${failed} document(s) failed to upload. You can re-upload them from your dashboard.`
+          );
+        }
+      }
+
+      toast.success(
+        "Your loan application has been submitted successfully! We'll review it within 24 hours."
+      );
+      navigate("/confirm", { state: { referenceNumber: application.reference_number } });
+    } catch (err) {
+      toast.error("Network error. Please check your connection and try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const nextStep = () => {
     if (currentStep < totalSteps) {
       setCurrentStep(currentStep + 1);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
 
   const prevStep = () => {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
 
@@ -144,7 +295,10 @@ export default function LoanApplication() {
       <nav className="bg-[#005B3F] text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
-            <div className="flex items-center gap-2 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => navigate("/")}>
+            <div
+              className="flex items-center gap-2 cursor-pointer hover:opacity-90 transition-opacity"
+              onClick={() => navigate("/")}
+            >
               <Logo textColor="text-white" />
             </div>
             <div className="flex items-center gap-6">
@@ -156,7 +310,7 @@ export default function LoanApplication() {
                   {user.name.charAt(0)}
                 </div>
                 <span className="font-medium hidden sm:block">{user.name}</span>
-                <button 
+                <button
                   onClick={() => navigate("/login")}
                   className="ml-2 text-white/80 hover:text-white transition-colors flex items-center gap-1"
                   title="Logout"
@@ -170,7 +324,6 @@ export default function LoanApplication() {
       </nav>
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Back Button */}
         <button
           onClick={() => navigate("/dashboard")}
           className="flex items-center gap-2 text-[#005B3F] hover:text-[#00432E] font-medium mb-6 transition-colors"
@@ -179,38 +332,39 @@ export default function LoanApplication() {
           Back to Dashboard
         </button>
 
-        {/* Header */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 mb-8">
           <h1 className="text-3xl font-black text-[#005B3F] mb-2">Loan Application</h1>
           <p className="text-gray-600 mb-6">
             Complete the form below to apply for a loan. All fields marked with * are required.
           </p>
 
-          {/* Progress Bar */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-bold text-gray-700">Step {currentStep} of {totalSteps}</span>
-              <span className="text-sm font-bold text-[#005B3F]">{Math.round(progressPercent)}% Complete</span>
+              <span className="text-sm font-bold text-gray-700">
+                Step {currentStep} of {totalSteps}
+              </span>
+              <span className="text-sm font-bold text-[#005B3F]">
+                {Math.round(progressPercent)}% Complete
+              </span>
             </div>
             <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-gradient-to-r from-[#005B3F] to-[#B4D330] transition-all duration-500"
                 style={{ width: `${progressPercent}%` }}
               ></div>
             </div>
           </div>
 
-          {/* Step Indicators */}
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {steps.map((step) => (
               <div
                 key={step.number}
                 className={`flex flex-col items-center gap-2 p-3 rounded-lg transition-all ${
                   currentStep === step.number
-                    ? 'bg-[#005B3F] text-white'
+                    ? "bg-[#005B3F] text-white"
                     : currentStep > step.number
-                    ? 'bg-[#B4D330]/20 text-[#005B3F]'
-                    : 'bg-gray-100 text-gray-400'
+                    ? "bg-[#B4D330]/20 text-[#005B3F]"
+                    : "bg-gray-100 text-gray-400"
                 }`}
               >
                 <div className="flex items-center justify-center">
@@ -220,17 +374,17 @@ export default function LoanApplication() {
                     step.icon
                   )}
                 </div>
-                <span className="text-xs font-bold text-center hidden sm:block">{step.title}</span>
+                <span className="text-xs font-bold text-center hidden sm:block">
+                  {step.title}
+                </span>
                 <span className="text-xs font-bold text-center sm:hidden">{step.number}</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit(onSubmit)}>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 mb-6">
-            
             {/* Step 1: Personal Information */}
             {currentStep === 1 && (
               <div className="space-y-6">
@@ -246,7 +400,9 @@ export default function LoanApplication() {
 
                 <div className="grid sm:grid-cols-2 gap-6">
                   <div>
-                    <Label htmlFor="fullName" className="text-gray-700 font-bold mb-2">Full Legal Name *</Label>
+                    <Label htmlFor="fullName" className="text-gray-700 font-bold mb-2">
+                      Full Legal Name *
+                    </Label>
                     <Input
                       id="fullName"
                       {...register("fullName", { required: "Full name is required" })}
@@ -262,15 +418,17 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="idNumber" className="text-gray-700 font-bold mb-2">ID Number *</Label>
+                    <Label htmlFor="idNumber" className="text-gray-700 font-bold mb-2">
+                      ID Number *
+                    </Label>
                     <Input
                       id="idNumber"
-                      {...register("idNumber", { 
+                      {...register("idNumber", {
                         required: "ID number is required",
                         pattern: {
                           value: /^\d{13}$/,
-                          message: "ID number must be 13 digits"
-                        }
+                          message: "ID number must be 13 digits",
+                        },
                       })}
                       placeholder="e.g., 9001010000000"
                       maxLength={13}
@@ -285,7 +443,9 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="dateOfBirth" className="text-gray-700 font-bold mb-2">Date of Birth *</Label>
+                    <Label htmlFor="dateOfBirth" className="text-gray-700 font-bold mb-2">
+                      Date of Birth *
+                    </Label>
                     <Input
                       id="dateOfBirth"
                       type="date"
@@ -301,16 +461,18 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="phoneNumber" className="text-gray-700 font-bold mb-2">Phone Number *</Label>
+                    <Label htmlFor="phoneNumber" className="text-gray-700 font-bold mb-2">
+                      Phone Number *
+                    </Label>
                     <Input
                       id="phoneNumber"
                       type="tel"
-                      {...register("phoneNumber", { 
+                      {...register("phoneNumber", {
                         required: "Phone number is required",
                         pattern: {
                           value: /^0\d{9}$/,
-                          message: "Phone number must start with 0 and be 10 digits"
-                        }
+                          message: "Phone number must start with 0 and be 10 digits",
+                        },
                       })}
                       placeholder="e.g., 0821234567"
                       maxLength={10}
@@ -325,16 +487,18 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="email" className="text-gray-700 font-bold mb-2">Email Address *</Label>
+                    <Label htmlFor="email" className="text-gray-700 font-bold mb-2">
+                      Email Address *
+                    </Label>
                     <Input
                       id="email"
                       type="email"
-                      {...register("email", { 
+                      {...register("email", {
                         required: "Email is required",
                         pattern: {
                           value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                          message: "Invalid email address"
-                        }
+                          message: "Invalid email address",
+                        },
                       })}
                       placeholder="e.g., sipho@email.com"
                       className="mt-1"
@@ -348,7 +512,9 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="maritalStatus" className="text-gray-700 font-bold mb-2">Marital Status *</Label>
+                    <Label htmlFor="maritalStatus" className="text-gray-700 font-bold mb-2">
+                      Marital Status *
+                    </Label>
                     <select
                       id="maritalStatus"
                       {...register("maritalStatus", { required: "Marital status is required" })}
@@ -369,7 +535,9 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="dependents" className="text-gray-700 font-bold mb-2">Number of Dependents *</Label>
+                    <Label htmlFor="dependents" className="text-gray-700 font-bold mb-2">
+                      Number of Dependents *
+                    </Label>
                     <Input
                       id="dependents"
                       type="number"
@@ -404,10 +572,14 @@ export default function LoanApplication() {
 
                 <div className="grid gap-6">
                   <div>
-                    <Label htmlFor="residentialAddress" className="text-gray-700 font-bold mb-2">Residential Address *</Label>
+                    <Label htmlFor="residentialAddress" className="text-gray-700 font-bold mb-2">
+                      Residential Address *
+                    </Label>
                     <Input
                       id="residentialAddress"
-                      {...register("residentialAddress", { required: "Residential address is required" })}
+                      {...register("residentialAddress", {
+                        required: "Residential address is required",
+                      })}
                       placeholder="e.g., 123 Main Street, Suburb"
                       className="mt-1"
                     />
@@ -421,7 +593,9 @@ export default function LoanApplication() {
 
                   <div className="grid sm:grid-cols-3 gap-6">
                     <div>
-                      <Label htmlFor="city" className="text-gray-700 font-bold mb-2">City *</Label>
+                      <Label htmlFor="city" className="text-gray-700 font-bold mb-2">
+                        City *
+                      </Label>
                       <Input
                         id="city"
                         {...register("city", { required: "City is required" })}
@@ -437,7 +611,9 @@ export default function LoanApplication() {
                     </div>
 
                     <div>
-                      <Label htmlFor="province" className="text-gray-700 font-bold mb-2">Province *</Label>
+                      <Label htmlFor="province" className="text-gray-700 font-bold mb-2">
+                        Province *
+                      </Label>
                       <select
                         id="province"
                         {...register("province", { required: "Province is required" })}
@@ -463,7 +639,9 @@ export default function LoanApplication() {
                     </div>
 
                     <div>
-                      <Label htmlFor="postalCode" className="text-gray-700 font-bold mb-2">Postal Code *</Label>
+                      <Label htmlFor="postalCode" className="text-gray-700 font-bold mb-2">
+                        Postal Code *
+                      </Label>
                       <Input
                         id="postalCode"
                         {...register("postalCode", { required: "Postal code is required" })}
@@ -482,13 +660,17 @@ export default function LoanApplication() {
 
                   <div className="grid sm:grid-cols-2 gap-6">
                     <div>
-                      <Label htmlFor="yearsAtAddress" className="text-gray-700 font-bold mb-2">Years at Current Address *</Label>
+                      <Label htmlFor="yearsAtAddress" className="text-gray-700 font-bold mb-2">
+                        Years at Current Address *
+                      </Label>
                       <Input
                         id="yearsAtAddress"
                         type="number"
                         min="0"
                         step="0.5"
-                        {...register("yearsAtAddress", { required: "Years at address is required" })}
+                        {...register("yearsAtAddress", {
+                          required: "Years at address is required",
+                        })}
                         placeholder="e.g., 3"
                         className="mt-1"
                       />
@@ -501,10 +683,14 @@ export default function LoanApplication() {
                     </div>
 
                     <div>
-                      <Label htmlFor="residentialStatus" className="text-gray-700 font-bold mb-2">Residential Status *</Label>
+                      <Label htmlFor="residentialStatus" className="text-gray-700 font-bold mb-2">
+                        Residential Status *
+                      </Label>
                       <select
                         id="residentialStatus"
-                        {...register("residentialStatus", { required: "Residential status is required" })}
+                        {...register("residentialStatus", {
+                          required: "Residential status is required",
+                        })}
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 mt-1"
                       >
                         <option value="">Select status</option>
@@ -540,10 +726,14 @@ export default function LoanApplication() {
 
                 <div className="grid gap-6">
                   <div>
-                    <Label htmlFor="employmentStatus" className="text-gray-700 font-bold mb-2">Employment Status *</Label>
+                    <Label htmlFor="employmentStatus" className="text-gray-700 font-bold mb-2">
+                      Employment Status *
+                    </Label>
                     <select
                       id="employmentStatus"
-                      {...register("employmentStatus", { required: "Employment status is required" })}
+                      {...register("employmentStatus", {
+                        required: "Employment status is required",
+                      })}
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 mt-1"
                     >
                       <option value="">Select status</option>
@@ -564,7 +754,9 @@ export default function LoanApplication() {
 
                   <div className="grid sm:grid-cols-2 gap-6">
                     <div>
-                      <Label htmlFor="employerName" className="text-gray-700 font-bold mb-2">Employer Name *</Label>
+                      <Label htmlFor="employerName" className="text-gray-700 font-bold mb-2">
+                        Employer Name *
+                      </Label>
                       <Input
                         id="employerName"
                         {...register("employerName", { required: "Employer name is required" })}
@@ -580,7 +772,9 @@ export default function LoanApplication() {
                     </div>
 
                     <div>
-                      <Label htmlFor="occupation" className="text-gray-700 font-bold mb-2">Occupation / Job Title *</Label>
+                      <Label htmlFor="occupation" className="text-gray-700 font-bold mb-2">
+                        Occupation / Job Title *
+                      </Label>
                       <Input
                         id="occupation"
                         {...register("occupation", { required: "Occupation is required" })}
@@ -597,10 +791,14 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="employerAddress" className="text-gray-700 font-bold mb-2">Employer Address *</Label>
+                    <Label htmlFor="employerAddress" className="text-gray-700 font-bold mb-2">
+                      Employer Address *
+                    </Label>
                     <Input
                       id="employerAddress"
-                      {...register("employerAddress", { required: "Employer address is required" })}
+                      {...register("employerAddress", {
+                        required: "Employer address is required",
+                      })}
                       placeholder="e.g., 456 Business Park, Sandton"
                       className="mt-1"
                     />
@@ -614,7 +812,9 @@ export default function LoanApplication() {
 
                   <div className="grid sm:grid-cols-2 gap-6">
                     <div>
-                      <Label htmlFor="monthlyIncome" className="text-gray-700 font-bold mb-2">Monthly Gross Income (R) *</Label>
+                      <Label htmlFor="monthlyIncome" className="text-gray-700 font-bold mb-2">
+                        Monthly Gross Income (R) *
+                      </Label>
                       <Input
                         id="monthlyIncome"
                         type="number"
@@ -632,7 +832,9 @@ export default function LoanApplication() {
                     </div>
 
                     <div>
-                      <Label htmlFor="yearsEmployed" className="text-gray-700 font-bold mb-2">Years with Current Employer *</Label>
+                      <Label htmlFor="yearsEmployed" className="text-gray-700 font-bold mb-2">
+                        Years with Current Employer *
+                      </Label>
                       <Input
                         id="yearsEmployed"
                         type="number"
@@ -652,16 +854,22 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="monthlyExpenses" className="text-gray-700 font-bold mb-2">Total Monthly Expenses (R) *</Label>
+                    <Label htmlFor="monthlyExpenses" className="text-gray-700 font-bold mb-2">
+                      Total Monthly Expenses (R) *
+                    </Label>
                     <Input
                       id="monthlyExpenses"
                       type="number"
                       min="0"
-                      {...register("monthlyExpenses", { required: "Monthly expenses is required" })}
+                      {...register("monthlyExpenses", {
+                        required: "Monthly expenses is required",
+                      })}
                       placeholder="e.g., 15000"
                       className="mt-1"
                     />
-                    <p className="text-xs text-gray-500 mt-1">Include rent, utilities, groceries, transport, etc.</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Include rent, utilities, groceries, transport, etc.
+                    </p>
                     {errors.monthlyExpenses && (
                       <p className="text-red-500 text-xs mt-1 flex items-center gap-1">
                         <AlertCircle className="w-3 h-3" />
@@ -689,16 +897,18 @@ export default function LoanApplication() {
                 <div className="grid gap-6">
                   <div className="grid sm:grid-cols-2 gap-6">
                     <div>
-                      <Label htmlFor="loanAmount" className="text-gray-700 font-bold mb-2">Loan Amount Requested (R) *</Label>
+                      <Label htmlFor="loanAmount" className="text-gray-700 font-bold mb-2">
+                        Loan Amount Requested (R) *
+                      </Label>
                       <Input
                         id="loanAmount"
                         type="number"
                         min="1000"
                         max="500000"
-                        {...register("loanAmount", { 
+                        {...register("loanAmount", {
                           required: "Loan amount is required",
                           min: { value: 1000, message: "Minimum loan amount is R 1,000" },
-                          max: { value: 500000, message: "Maximum loan amount is R 500,000" }
+                          max: { value: 500000, message: "Maximum loan amount is R 500,000" },
                         })}
                         placeholder="e.g., 50000"
                         className="mt-1"
@@ -713,7 +923,9 @@ export default function LoanApplication() {
                     </div>
 
                     <div>
-                      <Label htmlFor="repaymentTerm" className="text-gray-700 font-bold mb-2">Repayment Term *</Label>
+                      <Label htmlFor="repaymentTerm" className="text-gray-700 font-bold mb-2">
+                        Repayment Term *
+                      </Label>
                       <select
                         id="repaymentTerm"
                         {...register("repaymentTerm", { required: "Repayment term is required" })}
@@ -737,7 +949,9 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="loanType" className="text-gray-700 font-bold mb-2">Loan Type *</Label>
+                    <Label htmlFor="loanType" className="text-gray-700 font-bold mb-2">
+                      Loan Type *
+                    </Label>
                     <select
                       id="loanType"
                       {...register("loanType", { required: "Loan type is required" })}
@@ -760,7 +974,9 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="loanPurpose" className="text-gray-700 font-bold mb-2">Loan Purpose / Description *</Label>
+                    <Label htmlFor="loanPurpose" className="text-gray-700 font-bold mb-2">
+                      Loan Purpose / Description *
+                    </Label>
                     <Textarea
                       id="loanPurpose"
                       {...register("loanPurpose", { required: "Loan purpose is required" })}
@@ -777,7 +993,9 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="existingLoans" className="text-gray-700 font-bold mb-2">Existing Loans / Debts</Label>
+                    <Label htmlFor="existingLoans" className="text-gray-700 font-bold mb-2">
+                      Existing Loans / Debts
+                    </Label>
                     <Textarea
                       id="existingLoans"
                       {...register("existingLoans")}
@@ -803,13 +1021,14 @@ export default function LoanApplication() {
                   </div>
                 </div>
 
-                {/* Banking Information */}
                 <div className="bg-gray-50 rounded-xl p-6 space-y-6">
                   <h3 className="font-bold text-lg text-gray-900">Banking Information</h3>
-                  
+
                   <div className="grid sm:grid-cols-2 gap-6">
                     <div>
-                      <Label htmlFor="bankName" className="text-gray-700 font-bold mb-2">Bank Name *</Label>
+                      <Label htmlFor="bankName" className="text-gray-700 font-bold mb-2">
+                        Bank Name *
+                      </Label>
                       <select
                         id="bankName"
                         {...register("bankName", { required: "Bank name is required" })}
@@ -833,7 +1052,9 @@ export default function LoanApplication() {
                     </div>
 
                     <div>
-                      <Label htmlFor="accountType" className="text-gray-700 font-bold mb-2">Account Type *</Label>
+                      <Label htmlFor="accountType" className="text-gray-700 font-bold mb-2">
+                        Account Type *
+                      </Label>
                       <select
                         id="accountType"
                         {...register("accountType", { required: "Account type is required" })}
@@ -854,7 +1075,9 @@ export default function LoanApplication() {
                   </div>
 
                   <div>
-                    <Label htmlFor="accountNumber" className="text-gray-700 font-bold mb-2">Account Number *</Label>
+                    <Label htmlFor="accountNumber" className="text-gray-700 font-bold mb-2">
+                      Account Number *
+                    </Label>
                     <Input
                       id="accountNumber"
                       {...register("accountNumber", { required: "Account number is required" })}
@@ -870,22 +1093,26 @@ export default function LoanApplication() {
                   </div>
                 </div>
 
-                {/* References */}
                 <div className="bg-gray-50 rounded-xl p-6 space-y-6">
                   <div>
                     <h3 className="font-bold text-lg text-gray-900">Personal References</h3>
-                    <p className="text-sm text-gray-500 mt-1">Provide 2 references (not family members)</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Provide 2 references (not family members)
+                    </p>
                   </div>
 
-                  {/* Reference 1 */}
                   <div className="space-y-4">
                     <h4 className="font-bold text-md text-gray-700">Reference 1</h4>
                     <div className="grid sm:grid-cols-3 gap-4">
                       <div>
-                        <Label htmlFor="reference1Name" className="text-gray-700 font-bold mb-2">Full Name *</Label>
+                        <Label htmlFor="reference1Name" className="text-gray-700 font-bold mb-2">
+                          Full Name *
+                        </Label>
                         <Input
                           id="reference1Name"
-                          {...register("reference1Name", { required: "Reference name is required" })}
+                          {...register("reference1Name", {
+                            required: "Reference name is required",
+                          })}
                           placeholder="e.g., John Doe"
                           className="mt-1"
                         />
@@ -897,11 +1124,15 @@ export default function LoanApplication() {
                         )}
                       </div>
                       <div>
-                        <Label htmlFor="reference1Phone" className="text-gray-700 font-bold mb-2">Phone Number *</Label>
+                        <Label htmlFor="reference1Phone" className="text-gray-700 font-bold mb-2">
+                          Phone Number *
+                        </Label>
                         <Input
                           id="reference1Phone"
                           type="tel"
-                          {...register("reference1Phone", { required: "Reference phone is required" })}
+                          {...register("reference1Phone", {
+                            required: "Reference phone is required",
+                          })}
                           placeholder="e.g., 0821234567"
                           maxLength={10}
                           className="mt-1"
@@ -914,10 +1145,17 @@ export default function LoanApplication() {
                         )}
                       </div>
                       <div>
-                        <Label htmlFor="reference1Relationship" className="text-gray-700 font-bold mb-2">Relationship *</Label>
+                        <Label
+                          htmlFor="reference1Relationship"
+                          className="text-gray-700 font-bold mb-2"
+                        >
+                          Relationship *
+                        </Label>
                         <Input
                           id="reference1Relationship"
-                          {...register("reference1Relationship", { required: "Relationship is required" })}
+                          {...register("reference1Relationship", {
+                            required: "Relationship is required",
+                          })}
                           placeholder="e.g., Colleague"
                           className="mt-1"
                         />
@@ -931,15 +1169,18 @@ export default function LoanApplication() {
                     </div>
                   </div>
 
-                  {/* Reference 2 */}
                   <div className="space-y-4">
                     <h4 className="font-bold text-md text-gray-700">Reference 2</h4>
                     <div className="grid sm:grid-cols-3 gap-4">
                       <div>
-                        <Label htmlFor="reference2Name" className="text-gray-700 font-bold mb-2">Full Name *</Label>
+                        <Label htmlFor="reference2Name" className="text-gray-700 font-bold mb-2">
+                          Full Name *
+                        </Label>
                         <Input
                           id="reference2Name"
-                          {...register("reference2Name", { required: "Reference name is required" })}
+                          {...register("reference2Name", {
+                            required: "Reference name is required",
+                          })}
                           placeholder="e.g., Jane Smith"
                           className="mt-1"
                         />
@@ -951,11 +1192,15 @@ export default function LoanApplication() {
                         )}
                       </div>
                       <div>
-                        <Label htmlFor="reference2Phone" className="text-gray-700 font-bold mb-2">Phone Number *</Label>
+                        <Label htmlFor="reference2Phone" className="text-gray-700 font-bold mb-2">
+                          Phone Number *
+                        </Label>
                         <Input
                           id="reference2Phone"
                           type="tel"
-                          {...register("reference2Phone", { required: "Reference phone is required" })}
+                          {...register("reference2Phone", {
+                            required: "Reference phone is required",
+                          })}
                           placeholder="e.g., 0831234567"
                           maxLength={10}
                           className="mt-1"
@@ -968,10 +1213,17 @@ export default function LoanApplication() {
                         )}
                       </div>
                       <div>
-                        <Label htmlFor="reference2Relationship" className="text-gray-700 font-bold mb-2">Relationship *</Label>
+                        <Label
+                          htmlFor="reference2Relationship"
+                          className="text-gray-700 font-bold mb-2"
+                        >
+                          Relationship *
+                        </Label>
                         <Input
                           id="reference2Relationship"
-                          {...register("reference2Relationship", { required: "Relationship is required" })}
+                          {...register("reference2Relationship", {
+                            required: "Relationship is required",
+                          })}
                           placeholder="e.g., Friend"
                           className="mt-1"
                         />
@@ -986,9 +1238,10 @@ export default function LoanApplication() {
                   </div>
                 </div>
 
-                {/* Additional Information */}
                 <div>
-                  <Label htmlFor="additionalInfo" className="text-gray-700 font-bold mb-2">Additional Information</Label>
+                  <Label htmlFor="additionalInfo" className="text-gray-700 font-bold mb-2">
+                    Additional Information
+                  </Label>
                   <Textarea
                     id="additionalInfo"
                     {...register("additionalInfo")}
@@ -1040,31 +1293,44 @@ export default function LoanApplication() {
                   <input
                     type="file"
                     multiple
-                    accept=".pdf,.jpg,.jpeg,.png"
+                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                     onChange={handleFileUpload}
                     className="hidden"
                     id="file-upload"
                   />
                   <label htmlFor="file-upload">
-                    <Button type="button" className="bg-[#005B3F] hover:bg-[#00432E] text-white cursor-pointer" asChild>
+                    <Button
+                      type="button"
+                      className="bg-[#005B3F] hover:bg-[#00432E] text-white cursor-pointer"
+                      asChild
+                    >
                       <span>Select Files</span>
                     </Button>
                   </label>
-                  <p className="text-xs text-gray-400 mt-3">Accepted formats: PDF, JPG, PNG (Max 10MB per file)</p>
+                  <p className="text-xs text-gray-400 mt-3">
+                    Accepted formats: PDF, JPG, PNG, DOC, DOCX (Max {MAX_FILE_SIZE_MB}MB per file)
+                  </p>
                 </div>
 
-                {uploadedDocs.length > 0 && (
+                {uploadedFiles.length > 0 && (
                   <div className="space-y-3">
-                    <h3 className="font-bold text-gray-900">Uploaded Documents ({uploadedDocs.length})</h3>
-                    {uploadedDocs.map((doc, index) => (
-                      <div key={index} className="flex items-center justify-between bg-white border border-gray-200 rounded-lg p-4">
+                    <h3 className="font-bold text-gray-900">
+                      Selected Documents ({uploadedFiles.length})
+                    </h3>
+                    {uploadedFiles.map((file, index) => (
+                      <div
+                        key={`${file.name}-${index}`}
+                        className="flex items-center justify-between bg-white border border-gray-200 rounded-lg p-4"
+                      >
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-[#B4D330]/20 rounded-lg flex items-center justify-center">
                             <FileText className="w-5 h-5 text-[#005B3F]" />
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900 text-sm">{doc}</p>
-                            <p className="text-xs text-gray-500">Uploaded successfully</p>
+                            <p className="font-medium text-gray-900 text-sm">{file.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {formatFileSize(file.size)} · will upload on submit
+                            </p>
                           </div>
                         </div>
                         <button
@@ -1087,7 +1353,7 @@ export default function LoanApplication() {
             <Button
               type="button"
               onClick={prevStep}
-              disabled={currentStep === 1}
+              disabled={currentStep === 1 || isSubmitting}
               variant="outline"
               className="w-full sm:w-auto order-2 sm:order-1"
             >
@@ -1108,31 +1374,48 @@ export default function LoanApplication() {
               ) : (
                 <Button
                   type="submit"
-                  className="bg-[#B4D330] hover:bg-[#a3c02b] text-[#005B3F] font-bold px-8"
+                  disabled={isSubmitting}
+                  className="bg-[#B4D330] hover:bg-[#a3c02b] text-[#005B3F] font-bold px-8 disabled:opacity-70"
                 >
-                  <CheckCircle2 className="w-4 h-4 mr-2" />
-                  Submit Application
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 mr-2" />
+                      Submit Application
+                    </>
+                  )}
                 </Button>
               )}
             </div>
           </div>
         </form>
 
-        {/* Help Section */}
         <div className="mt-8 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <h3 className="font-bold text-gray-900 mb-2">Need Help?</h3>
           <p className="text-sm text-gray-600 mb-4">
-            If you have any questions or need assistance with your application, our team is here to help.
+            If you have any questions or need assistance with your application, our team is here
+            to help.
           </p>
           <div className="flex flex-wrap gap-4 text-sm">
-            <a href="tel:0800123456" className="text-[#005B3F] hover:text-[#00432E] font-medium flex items-center gap-2">
+            
+             <a href="tel:0800123456"
+              className="text-[#005B3F] hover:text-[#00432E] font-medium flex items-center gap-2"
+            >
               📞 0800 123 456
             </a>
-            <a href="mailto:loans@mbudzitshena.co.za" className="text-[#005B3F] hover:text-[#00432E] font-medium flex items-center gap-2">
+            
+            <a  href="mailto:loans@mbudzitshena.co.za"
+              className="text-[#005B3F] hover:text-[#00432E] font-medium flex items-center gap-2"
+            >
               ✉️ loans@mbudzitshena.co.za
             </a>
           </div>
         </div>
+
       </main>
     </div>
   );

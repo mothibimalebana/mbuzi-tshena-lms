@@ -22,19 +22,46 @@ def seed_admin():
         admin = db.query(User).filter(User.role == UserRole.ADMIN).first()
         if not admin:
             admin = User(
-                email="admin@mbudzitshena.co.za",
+                email="me@mxolisi.dev",
                 hashed_password=get_password_hash("Admin@12345"),
-                full_name="System Administrator",
+                full_name="Donald Mxolisi Mohlala",
                 role=UserRole.ADMIN,
                 is_active=True,
             )
             db.add(admin)
             db.commit()
-            logger.info("Default admin created → admin@mbudzitshena.co.za / Admin@12345")
+            logger.info("Default admin created → me@mxolisi.dev / Admin@12345")
         else:
             logger.info("Admin user already exists")
     finally:
         db.close()
+
+
+
+def seed_client():
+    """Create default BORROWER  if none exists."""
+    db = SessionLocal()
+    try:
+        borrower  = db.query(User).filter(User.role == UserRole.BORROWER).first()
+        if not borrower :
+            borrower  = User(
+                email="borrower@mxolisi.dev",
+                hashed_password=get_password_hash("BORROWER@12345"),
+                full_name="Donald Mxolisi Mohlala",
+                id_number="8308110424081",
+                phone_number="0781045677",
+                role=UserRole.BORROWER,
+                risk_score=23.0,
+                is_active=True,
+            )
+            db.add(borrower )
+            db.commit()
+            logger.info("Default borrower  created → borrower@mxolisi.dev / BORROWER@12345")
+        else:
+            logger.info("borrower  user already exists")
+    finally:
+        db.close()
+
 
 
 @asynccontextmanager
@@ -43,6 +70,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     init_db()
     seed_admin()
+    seed_client()
     Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
     logger.info("Mbudzi Tshena LMS API ready")
     yield
@@ -65,10 +93,12 @@ origins = [
     "http://localhost:5173",
     "http://localhost:3000",
     "http://127.0.0.1:5173",
+    "https://organic-space-journey-q79jp6w7xgg3xwxp-5173.app.github.dev"
+    
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins + ["*"] if settings.DEBUG else origins,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

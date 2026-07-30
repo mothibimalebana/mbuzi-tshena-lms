@@ -7,12 +7,68 @@ export default function AdminLogin() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Simulate login redirecting to dashboard
+   const API_URL = import.meta.env.VITE_API_URL;
+
+const handleLogin = async (e: React.FormEvent) => {
+  e.preventDefault();
+
+  setLoading(true);
+  setError("");
+
+  try {
+    const res = await fetch(
+  `${API_URL}/api/auth/admin/login`,
+  {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email,
+      password,
+    }),
+  }
+);
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data.detail || data.message || "Invalid email/ID number or password.");
+      return;
+    }
+
+    // Fetch the authenticated user using the cookie
+    const meRes = await fetch(
+      `${API_URL}/api/auth/me`,
+      {
+        credentials: "include",
+      }
+    );
+
+    if (!meRes.ok) {
+      setError("Failed to retrieve user information.");
+      return;
+    }
+
+    const user = await meRes.json();
+
+
+
+    // store only the user (not the JWT)
+    sessionStorage.setItem("user", JSON.stringify(user));
+
     navigate("/admin");
-  };
+  } catch (err) {
+    setError("Unable to connect to the server. Please try again.");
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   return (
     <div className="min-h-screen bg-[#F4F6F8] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-['Inter',sans-serif]">
@@ -90,12 +146,44 @@ export default function AdminLogin() {
             </div>
 
             <div>
-              <button
-                type="submit"
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-[#005B3F] hover:bg-[#00432E] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#B4D330] transition-colors"
-              >
-                Sign in securely
-              </button>
+                {error && (
+      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {error}
+      </div>
+    )}
+                  <button
+  type="submit"
+  disabled={loading}
+  className="w-full flex justify-center items-center py-3 px-4 rounded-lg shadow-sm text-sm font-bold text-white bg-[#005B3F] hover:bg-[#00432E] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#B4D330] transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+>
+  {loading ? (
+    <>
+      <svg
+        className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle
+          className="opacity-25"
+          cx="12"
+          cy="12"
+          r="10"
+          stroke="currentColor"
+          strokeWidth="4"
+        />
+        <path
+          className="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+        />
+      </svg>
+      Signing In...
+    </>
+  ) : (
+    "Sign In"
+  )}
+</button>
             </div>
           </form>
           
