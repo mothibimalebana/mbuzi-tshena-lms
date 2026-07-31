@@ -20,6 +20,10 @@ from app.auth import get_current_user, get_current_admin, get_current_active_bor
 from app.utils.risk_score import compute_risk_score, format_currency, relative_date
 from app.utils.email import send_application_confirmation
 
+from app.model.run import LoanPredictionModel
+
+model = LoanPredictionModel()
+
 router = APIRouter(prefix="/api/applications", tags=["Loan Applications"])
 
 
@@ -46,18 +50,35 @@ async def create_application(
     while db.query(LoanApplication).filter(LoanApplication.reference_number == ref).first():
         ref = generate_reference()
 
-    # Compute risk score
-    score, action = compute_risk_score(
-        monthly_income=float(data.monthly_income),
-        loan_amount=float(data.loan_amount),
-        repayment_term=data.repayment_term,
-        employment_status=data.employment_status,
-        years_employed=data.years_employed,
-        dependents=data.dependents,
-        monthly_expenses=float(data.monthly_expenses) if data.monthly_expenses else None,
-        date_of_birth=data.date_of_birth,
-        existing_loans=data.existing_loans,
+
+    result = model.predict_one(
+        # Missing fields (temporary defaults)
+        Gender=0,
+        Education=0,
+        Credit_History=0,
+        CoapplicantIncome=0,
+
+        # Derived from your request
+        Married=1 if data.marital_status.lower() == "married" else 0,
+        Dependents=data.dependents,
+        Self_Employed=1 if data.employment_status.lower() == "self employed" else 0,
+        ApplicantIncome=float(data.monthly_income),
+        LoanAmount=float(data.loan_amount),
+        Loan_Amount_Term=data.repayment_term,
+
+        # Temporary location mapping
+        Rural=0,
+        Semiurban=0,
+        Urban=0,
     )
+    
+
+    risk_score = result["rejection_probability"]
+
+    if result["prediction"] == "Approved":
+        ai_action = AIAction.AUTO_APPROVE
+    else:
+        ai_action = AIAction.DECLINE
 
     app = LoanApplication(
         reference_number=ref,
@@ -98,8 +119,8 @@ async def create_application(
         existing_loans=data.existing_loans,
         additional_info=data.additional_info,
         status=ApplicationStatus.PENDING,
-        ai_risk_score=score,
-        ai_action=AIAction(action),
+        ai_risk_score=risk_score,
+        ai_action=ai_action,
     )
     db.add(app)
     db.commit()
