@@ -127,12 +127,12 @@ async def create_application(
     db.refresh(app)
 
     # Create fraud alert if high risk
-    if score >= 60:
+    if risk_score >= 60:
         alert = FraudAlert(
             alert_id=f"FA-{secrets.token_hex(4).upper()}",
             application_id=app.id,
-            reason=f"High AI risk score ({score}) – {action}",
-            risk_score=score,
+            reason=f"High AI risk score ({risk_score}) – {AIAction}",
+            risk_score=risk_score,
         )
         db.add(alert)
         db.commit()
