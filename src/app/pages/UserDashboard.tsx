@@ -12,16 +12,53 @@ import {
   Briefcase
 } from "lucide-react";
 import { Logo } from "../components/Logo";
+import { useState, useEffect } from "react";
 
 export default function UserDashboard() {
+  const [user, setUser] = useState<any>(null);
   const navigate = useNavigate();
+   const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutMessage, setLogoutMessage] = useState("");
 
-  // Mock user data
-  const user = {
-    name: "Sipho",
-    riskScore: 84, // 0-100
-    status: "Excellent",
-  };
+   
+  const handleLogout = async () => {
+  try {
+    setLoggingOut(true);
+    setLogoutMessage("");
+
+    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+
+    const data = await res.json();
+
+    setLogoutMessage(data.message);
+
+    if (!res.ok) {
+      throw new Error(data.message || "Logout failed");
+    }
+
+    // Give the user a moment to see the success message
+    setTimeout(() => {
+      sessionStorage.removeItem("user");
+      navigate("/login", { replace: true });
+    }, 1000);
+
+  } catch (err: any) {
+    setLogoutMessage(err.message || "Unable to log out.");
+  } finally {
+    setLoggingOut(false);
+  }
+};
+
+  useEffect(() => {
+      const storedUser = sessionStorage.getItem("user");
+  
+      if (storedUser) {
+        setUser(JSON.parse(storedUser));
+      }
+    }, []);
 
   // Mock loan offers based on score
   const loanOffers = [
@@ -45,6 +82,17 @@ export default function UserDashboard() {
     }
   ];
 
+  if (!user) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#F4F6F8]">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-4 border-[#005B3F]/20 border-t-[#005B3F] rounded-full animate-spin"></div>
+        <p className="text-gray-500 font-medium">Loading dashboard...</p>
+      </div>
+    </div>
+  );
+}
+
   return (
     <div className="min-h-screen bg-[#F4F6F8] font-['Inter',sans-serif]">
       {/* Top Navigation */}
@@ -61,15 +109,26 @@ export default function UserDashboard() {
               </button>
               <div className="flex items-center gap-3 border-l border-white/20 pl-6">
                 <div className="h-8 w-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm">
-                  {user.name.charAt(0)}
+                  {user.full_name.charAt(0) ?? "Loading..." }
                 </div>
-                <span className="font-medium hidden sm:block">{user.name}</span>
+              
+                <span className="font-medium hidden sm:block">{user?.full_name ?? "Loading..."}</span>
                 <button 
-                  onClick={() => navigate("/login")}
+                 onClick={handleLogout}
                   className="ml-2 text-white/80 hover:text-white transition-colors flex items-center gap-1"
                   title="Logout"
                 >
-                  <LogOut className="w-5 h-5" />
+                   {loggingOut ? (
+          <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Signing out...
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="w-5 h-5" />
+                    Log Out
+                  </>
+                )}
                 </button>
               </div>
             </div>
@@ -110,7 +169,16 @@ export default function UserDashboard() {
                     <h2 className="text-lg font-bold text-gray-800">AI Risk Assessment</h2>
                   </div>
                   <p className="text-sm text-gray-500 max-w-sm mb-4">
-                    Our AI model has analyzed your financial data and assigns you an {user.status.toLowerCase()} credit profile. This unlocks premium rates.
+                    <p className="text-sm text-gray-500 max-w-sm mb-4">
+                  Account Status:{" "}
+                  <span
+                    className={`font-bold ${
+                      user.is_active ? "text-green-600" : "text-red-600"
+                    }`}
+                  >
+                    {user.is_active ? "Active" : "Inactive"}
+                  </span>
+                </p>
                   </p>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#B4D330]/20 text-[#005B3F] rounded-full text-sm font-bold">
                     <CheckCircle2 className="w-4 h-4" />

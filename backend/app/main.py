@@ -1,0 +1,133 @@
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
+from app.config import settings
+from app.database import init_db, SessionLocal
+from app.models import User, UserRole
+from app.auth import get_password_hash
+from app.routers import auth, applications, payments, admin, documents
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def seed_admin():
+    """Create default admin if none exists."""
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.role == UserRole.ADMIN).first()
+        if not admin:
+            admin = User(
+                email="me@mxolisi.dev",
+                hashed_password=get_password_hash("Admin@12345"),
+                full_name="Donald Mxolisi Mohlala",
+                role=UserRole.ADMIN,
+                is_active=True,
+            )
+            db.add(admin)
+            db.commit()
+            logger.info("Default admin created → me@mxolisi.dev / Admin@12345")
+        else:
+            logger.info("Admin user already exists")
+    finally:
+        db.close()
+
+
+
+def seed_client():
+    """Create default BORROWER  if none exists."""
+    db = SessionLocal()
+    try:
+        borrower  = db.query(User).filter(User.role == UserRole.BORROWER).first()
+        if not borrower :
+            borrower  = User(
+                email="borrower@mxolisi.dev",
+                hashed_password=get_password_hash("BORROWER@12345"),
+                full_name="Donald Mxolisi Mohlala",
+                id_number="8308110424081",
+                phone_number="0781045677",
+                role=UserRole.BORROWER,
+                risk_score=23.0,
+                is_active=True,
+            )
+            db.add(borrower )
+            db.commit()
+            logger.info("Default borrower  created → borrower@mxolisi.dev / BORROWER@12345")
+        else:
+            logger.info("borrower  user already exists")
+    finally:
+        db.close()
+
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Initializing database...")
+    init_db()
+    seed_admin()
+    seed_client()
+    Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+    logger.info("Mbudzi Tshena LMS API ready")
+    yield
+    # Shutdown
+    logger.info("Shutting down...")
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    description="Backend API for Mbudzi Tshena Financial Solutions – Microfinance Loan Management System",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+# CORS
+origins = [
+    settings.FRONTEND_URL,
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "https://organic-space-journey-q79jp6w7xgg3xwxp-5173.app.github.dev"
+    
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Routers
+app.include_router(auth.router)
+app.include_router(applications.router)
+app.include_router(payments.router)
+app.include_router(admin.router)
+app.include_router(documents.router)
+
+# Serve uploaded files in debug
+if settings.DEBUG:
+    upload_path = Path(settings.UPLOAD_DIR)
+    upload_path.mkdir(parents=True, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=str(upload_path)), name="uploads")
+
+
+@app.get("/")
+def root():
+    return {
+        "name": settings.APP_NAME,
+        "version": "1.0.0",
+        "docs": "/docs",
+        "status": "running",
+    }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
