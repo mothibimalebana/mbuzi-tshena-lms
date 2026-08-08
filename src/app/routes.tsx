@@ -13,6 +13,7 @@ import DashboardOverview from "./pages/DashboardOverview";
 import LoanRequests from "./pages/LoanRequests";
 import PaymentsTracker from "./pages/PaymentsTracker";
 import BorrowersList from "./pages/BorrowersList";
+import UserSignUp from "./pages/UserSignUp";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -60,6 +61,14 @@ export const router = createBrowserRouter([
       {
         path: "admin/login",
         Component: AdminLogin,
+      },
+      {
+        path: "sign-up",
+        Component:  UserSignUp,
+      },
+      {
+        path: "dashboard",
+        Component: UserDashboard,
       },
       {
         path: "apply",

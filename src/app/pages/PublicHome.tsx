@@ -37,7 +37,7 @@ export default function PublicHome() {
                 Sign in
               </Link>
               <Link 
-                to="/login" 
+                to="/sign-up" 
                 className="inline-flex items-center justify-center px-5 py-2.5 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-[#005B3F] hover:bg-[#00432E] transition-colors"
               >
                 Get Started
