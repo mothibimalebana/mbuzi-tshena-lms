@@ -6,7 +6,7 @@ from sqlalchemy import func, and_
 
 from app.database import get_db
 from app.models import (
-    User, LoanApplication, Loan, Payment, FraudAlert,
+    User, LoanApplication, Loan, Payment, FraudAlert, BorrowerScore,
     ApplicationStatus, UserRole, PaymentType, PaymentStatus
 )
 from app.schemas import (
@@ -15,9 +15,57 @@ from app.schemas import (
 )
 from app.auth import get_current_admin
 from app.utils.risk_score import relative_date, format_currency
+from app.utils.reliability import save_reliability, latest_score
 from fastapi import Query
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+
+def percent_change(now: float, before: float) -> str:
+    """Change compared with last week, e.g. "+50%", "-20%", "0%" ("new" when there was nothing last week)."""
+    if before == 0:
+        return "new" if now > 0 else "0%"
+    return f"{(now - before) / before * 100:+.0f}%".replace("+0%", "0%").replace("-0%", "0%")
+
+
+def average_risk(db: Session, start: datetime, end: datetime) -> float:
+    """Average AI risk score of applications submitted between start and end (0 if there were none)."""
+    value = (
+        db.query(func.avg(LoanApplication.ai_risk_score))
+        .filter(LoanApplication.created_at >= start, LoanApplication.created_at < end,
+                LoanApplication.ai_risk_score.isnot(None))
+        .scalar()
+    )
+    return float(value) if value else 0.0
+
+def dashboard_trends(db: Session, active_now: int, reliable_now: int, borrowers: list) -> dict:
+    """Real week-on-week changes for the 4 cards on the admin Overview."""
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+    two_weeks_ago = now - timedelta(days=14)
+
+    # Loans that already existed a week ago (paid-off dates are not stored, so this is an estimate)
+    active_week_ago = db.query(Loan).filter(Loan.created_at <= week_ago, Loan.status.in_(["Active", "Paid Off"])).count()
+
+    # Reliable borrowers a week ago: each borrower's newest score from before that date
+    reliable_week_ago = 0
+    for b in borrowers:
+        old = (
+            db.query(BorrowerScore)
+            .filter(BorrowerScore.user_id == b.id, BorrowerScore.created_at <= week_ago)
+            .order_by(BorrowerScore.created_at.desc(), BorrowerScore.id.desc())
+            .first()
+        )
+        if old and old.score_status == "Reliable":
+            reliable_week_ago += 1
+
+    new_alerts = db.query(FraudAlert).filter(FraudAlert.created_at >= week_ago).count()
+    return {
+        "active_loans": percent_change(active_now, active_week_ago),
+        "borrowers": percent_change(reliable_now, reliable_week_ago),
+        "risk_score": percent_change(average_risk(db, week_ago, now), average_risk(db, two_weeks_ago, week_ago)),
+        "fraud": f"+{new_alerts}" if new_alerts else "0",
+    }
 
 
 @router.get("/dashboard", response_model=AdminDashboard)
@@ -30,13 +78,13 @@ def dashboard(
     total_active_amount = sum(float(l.outstanding_balance) for l in active_loans)
     total_active_count = len(active_loans)
 
-    # Reliable borrowers (users with risk_score < 40 or approved apps)
-    reliable_count = (
-        db.query(func.count(User.id))
-        .filter(User.role == UserRole.BORROWER, User.is_active == True)
-        .scalar()
-        or 0
-    )
+    # Reliable borrowers: their latest reliability score says "Reliable" (Run Batch Analysis on the Borrowers page)
+    borrowers = db.query(User).filter(User.role == UserRole.BORROWER, User.is_active == True).all()
+    reliable_count = 0
+    for b in borrowers:
+        score = latest_score(b, db)
+        if score and score.score_status == "Reliable":
+            reliable_count += 1
 
     # Avg risk score
     avg_score = (
@@ -71,12 +119,7 @@ def dashboard(
         fraud_alerts_count=fraud_count,
         processed_today=processed_today,
         accuracy_pct=99.8,  # placeholder
-        trends={
-            "active_loans": "+12.5%",
-            "borrowers": "+5.2%",
-            "risk_score": "-2.1%",
-            "fraud": f"+{fraud_count}",
-        },
+        trends=dashboard_trends(db, total_active_count, reliable_count, borrowers),
     )
 
     # Chart data – last 7 days
@@ -181,6 +224,7 @@ def list_borrowers(
 
     items = [
         {
+            **reliability_fields(latest_score(u, db)),
             "id": u.id,
             "name": u.full_name,
             "email": u.email,
@@ -208,6 +252,26 @@ def list_borrowers(
         page_size=page_size,
         pages=pages,
     )
+
+def reliability_fields(score) -> dict:
+    return {
+        "reliability_score": score.reliability_score if score else None,
+        "reliability_status": score.score_status if score else None,
+        "reliability_remarks": score.remarks if score else None,
+        "reliability_date": relative_date(score.created_at) if score else None,
+    }
+
+# "Run Batch Analysis": score every borrower at once (SRS feature #2)
+@router.post("/borrowers/score")
+def score_all_borrowers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    counts = {"Reliable": 0, "Average": 0, "At risk": 0, "New": 0}
+    for user in db.query(User).filter(User.role == UserRole.BORROWER).all():
+        counts[save_reliability(user, db).score_status] += 1
+    db.commit()
+    return {"scored": sum(counts.values()), **counts}
 
 @router.get("/alerts")
 def list_alerts(

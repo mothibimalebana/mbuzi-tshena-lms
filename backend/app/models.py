@@ -424,4 +424,13 @@ class ChatbotInteraction(Base):
 
     user: Mapped["User"] = relationship("User")
 
+class BorrowerScore(Base):
+    """A borrower's reliability score (SRS class BorrowerScore). A new row every time it is calculated."""
+    __tablename__ = "borrower_scores"
 
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)                    # ScoreID
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)    # UserID
+    reliability_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)         # ReliabilityScore (None = New)
+    score_status: Mapped[str] = mapped_column(String(20), nullable=False)                    # ScoreStatus
+    remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)                      # ScoringRemarks
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)         # ScoreDate
