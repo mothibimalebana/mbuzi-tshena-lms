@@ -2,7 +2,7 @@ import { Link, useNavigate } from "react-router";
 import {
   Bell, LogOut, CheckCircle2, ArrowRight, Activity, Wallet, PieChart, TrendingUp,
   CreditCard, Briefcase, Filter, X, Upload, FileText, Clock, XCircle, Megaphone,
-  Info, AlertCircle, Loader2, Eye
+  Info, AlertCircle, Loader2, Eye, GraduationCap, Hammer, Layers, LifeBuoy
 } from "lucide-react";
 import clsx from "clsx";
 import { Logo } from "../components/Logo";
@@ -378,9 +378,6 @@ export default function UserDashboard() {
     [apiHistory]
   );
 
-  // ─── Derived user status string (used in AI risk text) ─────────
-  const userStatus = user?.is_active ? "Excellent" : "Inactive";
-
   // ─── Real notifications ──────────────────────────────────────────
   const [announcementDismissed, setAnnouncementDismissed] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -543,10 +540,34 @@ export default function UserDashboard() {
   const latestApplication = loanHistory.length > 0 ? loanHistory[0] : null;
   const aiRiskScore = latestApplication?.riskScore ?? null;
 
+  // Same bands as the AI's recommended actions (backend/app/utils/risk_assessment.py). Lower risk is better.
+  const riskBand =
+    aiRiskScore === null ? null
+    : aiRiskScore < 25 ? { label: "Low risk", ring: "border-[#B4D330]", text: "text-[#005B3F]" }
+    : aiRiskScore < 45 ? { label: "Moderate risk", ring: "border-amber-300", text: "text-amber-600" }
+    : aiRiskScore < 70 ? { label: "Elevated risk", ring: "border-orange-400", text: "text-orange-600" }
+    : { label: "High risk", ring: "border-red-400", text: "text-red-600" };
+
+  // The real loan types from the application form. Every approved loan is charged 18% a year
+  // (backend/app/routers/applications.py), and the example instalment uses the same formula as the backend.
+  const YEARLY_RATE = 18;
+  const monthlyInstalment = (amount: number, months: number) => {
+    const r = YEARLY_RATE / 100 / 12;
+    return (amount * r * (1 + r) ** months) / ((1 + r) ** months - 1);
+  };
+  const iconClass = "w-6 h-6 text-[#005B3F]";
   const loanOffers = [
-    { id: 1, title: "Personal Growth Loan", amount: "R1,000 - R 49,000", rate: "Prime + 2%", term: "24 Months", type: "Personal", icon: <CreditCard className="w-6 h-6 text-[#005B3F]" /> },
-    { id: 2, title: "SME Starter Pack",     amount: "R150,00 - R 250,000", rate: "Prime + 1.5%", term: "48 Months", type: "Business", icon: <Briefcase className="w-6 h-6 text-[#005B3F]" /> },
+    { type: "personal", title: "Personal Loan", label: "Personal", example: [10000, 24], icon: <CreditCard className={iconClass} /> },
+    { type: "business", title: "Business Loan", label: "Business", example: [100000, 48], icon: <Briefcase className={iconClass} /> },
+    { type: "education", title: "Education Loan", label: "Education", example: [30000, 36], icon: <GraduationCap className={iconClass} /> },
+    { type: "home-improvement", title: "Home Improvement Loan", label: "Home", example: [50000, 36], icon: <Hammer className={iconClass} /> },
+    { type: "debt-consolidation", title: "Debt Consolidation Loan", label: "Debt", example: [40000, 48], icon: <Layers className={iconClass} /> },
+    { type: "emergency", title: "Emergency Loan", label: "Emergency", example: [5000, 6], icon: <LifeBuoy className={iconClass} /> },
   ];
+// The loan type of the customer's latest application comes first
+  const sortedOffers = [...loanOffers].sort((a, b) => Number(b.type === latestApplication?.type) - Number(a.type === latestApplication?.type));
+  const [showAllOffers, setShowAllOffers] = useState(false);
+  const visibleOffers = showAllOffers ? sortedOffers : sortedOffers.slice(0, 2);
 
   const hasActiveFilters = filterStatus !== "all" || filterDateFrom || filterDateTo || filterMinAmount || filterMaxAmount;
 
@@ -763,23 +784,29 @@ else alert("Upload failed");};
                     <h2 className="text-lg font-bold text-gray-800">AI Risk Assessment</h2>
                   </div>
                   <p className="text-sm text-gray-500 max-w-sm mb-4">
-                    {latestApplication
-                      ? `Based on your most recent application (${latestApplication.id}). Our AI model assigns you an ${userStatus.toLowerCase()} credit profile.`
+                    {latestApplication && riskBand && aiRiskScore !== null
+                      ? `Based on your most recent application (${latestApplication.id}), our AI rates it as ${riskBand.label.toLowerCase()}: an estimated ${Math.round(100 - aiRiskScore)}% chance of being repaid on time. The risk score runs from 0 (best) to 100.`
                       : "Our AI model will analyze your financial data once you submit a loan application."}
                   </p>
-                  {aiRiskScore !== null && (
+                  {aiRiskScore !== null && aiRiskScore < 25 && (
                     <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#B4D330]/20 text-[#005B3F] rounded-full text-sm font-bold">
                       <CheckCircle2 className="w-4 h-4" />
-                      Pre-approved for Top Tier
+                      Strong application
                     </div>
+                  )}
+                  {aiRiskScore !== null && aiRiskScore >= 25 && (
+                    <p className="text-xs text-gray-500 font-medium">
+                      Tip: a smaller amount or a longer repayment term lowers the monthly instalment, which lowers your risk.
+                    </p>
                   )}
                 </div>
 
-                <div className="order-1 sm:order-2 self-center flex flex-col items-center justify-center bg-gray-50 rounded-full w-32 h-32 border-4 border-[#B4D330] shadow-inner shrink-0 relative group">
-                  {aiRiskScore !== null ? (
+                <div className={`order-1 sm:order-2 self-center flex flex-col items-center justify-center bg-gray-50 rounded-full w-32 h-32 border-4 ${riskBand?.ring ?? "border-gray-200"} shadow-inner shrink-0 relative group`}>
+                  {aiRiskScore !== null && riskBand ? (
                     <>
-                      <span className="text-4xl font-black text-[#005B3F]">{aiRiskScore}</span>
-                      <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Score</span>
+                      <span className={`text-4xl font-black ${riskBand.text}`}>{aiRiskScore}</span>
+                      <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Risk / 100</span>
+                      <span className={`text-xs font-bold mt-0.5 ${riskBand.text}`}>{riskBand.label}</span>
                     </>
                   ) : (
                     <>
@@ -800,37 +827,43 @@ else alert("Upload failed");};
             {/* Loan Offers Section */}
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-[#111827]">Your Personalized Offers</h2>
-                <button className="text-sm font-bold text-[#005B3F] hover:text-[#00432E] transition-colors">
-                  View all
+                <h2 className="text-xl font-bold text-[#111827]">Loan Options</h2>
+                <button onClick={() => setShowAllOffers(!showAllOffers)} className="text-sm font-bold text-[#005B3F] hover:text-[#00432E] transition-colors">
+                  {showAllOffers ? "Show less" : `View all ${loanOffers.length}`}
                 </button>
               </div>
 
               <div className="grid sm:grid-cols-2 gap-4">
-                {loanOffers.map((offer) => (
-                  <div key={offer.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow cursor-pointer group">
+                {visibleOffers.map((offer) => (
+                  <div key={offer.type} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow cursor-pointer group">
                     <div className="w-12 h-12 bg-[#F4F6F8] rounded-xl flex items-center justify-center mb-4 group-hover:bg-[#B4D330]/20 transition-colors">
                       {offer.icon}
                     </div>
                     <div className="inline-block px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-bold mb-2">
-                      {offer.type}
+                      {offer.label}
                     </div>
                     <h3 className="text-lg font-bold text-gray-900 mb-1">{offer.title}</h3>
-                    <div className="text-2xl font-black text-[#005B3F] mb-4">{offer.amount}</div>
+                    <div className="text-xl font-black text-[#005B3F] mb-4">R 1,000 – R 500,000</div>
 
                     <div className="space-y-2 mb-6">
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500 font-medium">Interest Rate</span>
-                        <span className="font-bold text-gray-900">{offer.rate}</span>
+                        <span className="font-bold text-gray-900">{YEARLY_RATE}% per year</span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500 font-medium">Repayment Term</span>
-                        <span className="font-bold text-gray-900">{offer.term}</span>
+                        <span className="font-bold text-gray-900">6 – 60 months</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                        <span className="text-gray-500 font-medium">Example</span>
+                        <span className="font-bold text-gray-900 text-right">
+                          R{offer.example[0].toLocaleString("en-ZA")} over {offer.example[1]} months: {formatMoney(monthlyInstalment(offer.example[0], offer.example[1]))}/month
+                        </span>
                       </div>
                     </div>
 
                     <button
-                      onClick={() => navigate("/apply")}
+                      onClick={() => navigate(`/apply?type=${offer.type}`)}
                       className="w-full py-2.5 rounded-lg border-2 border-[#005B3F] text-[#005B3F] font-bold hover:bg-[#005B3F] hover:text-white transition-colors flex items-center justify-center gap-2"
                     >
                       Apply Now
@@ -857,14 +890,16 @@ else alert("Upload failed");};
 
                 <h2 className="text-2xl font-bold mb-3 leading-tight">Become a MicroFin Investor</h2>
                 <p className="text-white/80 text-sm mb-6 leading-relaxed">
-                  Your excellent financial standing makes you an ideal candidate to join our peer-to-peer investment fund. Earn up to{" "}
-                  <strong className="text-[#B4D330]">11.5% APY</strong> by funding local entrepreneurs.
+                  Put your money to work by funding loans to other customers. Choose a risk level and earn up to{" "}
+                  <strong className="text-[#B4D330]">{Math.max(...Object.values(INVESTMENT_RATES))}% a year</strong>, with interest added every month.
                 </p>
 
                 <ul className="space-y-3 mb-8 text-sm text-white/90 font-medium">
-                  <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#B4D330]" />Capital protection fund included</li>
-                  <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#B4D330]" />Start with as little as R 1,000</li>
-                  <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#B4D330]" />Impact local businesses directly</li>
+                  {Object.entries(INVESTMENT_RATES).map(([level, rate]) => (
+                    <li key={level} className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#B4D330]" />{level}: {rate}% a year</li>
+                  ))}
+                  <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#B4D330]" />Start with as little as R 1,000, for up to 60 months</li>
+                  <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#B4D330]" />See what your investment is worth today on your dashboard</li>
                 </ul>
 
                 <button
