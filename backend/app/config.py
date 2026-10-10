@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: Optional[str] = "mbudzi.tshena.lms@gmail.com"
-    SMTP_PASSWORD: Optional[str] = "zkgoufewzyenkbhl"
+    SMTP_PASSWORD: Optional[str] = None
     SMTP_FROM: str = "loans@mbudzitshena.co.za"
     EMAIL_ENABLED: bool = True
 
