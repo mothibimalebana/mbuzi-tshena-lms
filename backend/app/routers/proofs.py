@@ -19,7 +19,7 @@ from app.auth import get_current_user, get_current_admin
 from app.config import settings
 from app.utils.file_store import store_file, restore_file
 from app.utils.risk_score import format_currency
-from app.utils.loan_balance import loan_totals, update_loan_balance
+from app.utils.loan_balance import totals_after, update_loan_balance
 from app.utils.reliability import save_reliability
 from app.routers.payments import generate_trx_id
 from app.utils.proof_check import run_proof_check
@@ -42,6 +42,7 @@ def proof_payment(p: ProofOfPayment):
 def proof_to_dict(p: ProofOfPayment) -> dict:
     loan = p.application.loan if p.application else None
     payment = proof_payment(p)
+    counted = payment is not None and payment.status == PaymentStatus.COMPLETED
     return {
         "id": p.proof_id,
         "user_name": p.user.full_name if p.user else "Unknown",
@@ -53,8 +54,9 @@ def proof_to_dict(p: ProofOfPayment) -> dict:
         "uploaded_at": p.uploaded_at,
         "status": p.status.value,
         "admin_notes": p.admin_notes,
-        "amount_paid": float(payment.amount) if payment and payment.status == PaymentStatus.COMPLETED else None,
-        "loan_totals": loan_totals(loan) if loan else None,
+        "amount_paid": float(payment.amount) if counted else None,
+        # Only a verified proof has a balance: the one right after its payment (rejected / pending: none)
+        "loan_totals": totals_after(loan, payment) if counted else None,
         "check": {
             "status": p.check.status,
             "details": p.check.details,
