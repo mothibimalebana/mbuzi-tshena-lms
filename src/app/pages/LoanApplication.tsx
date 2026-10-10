@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   Bell,
   LogOut,
@@ -132,6 +132,9 @@ function formatFileSize(bytes: number) {
 
 export default function LoanApplication() {
   const navigate = useNavigate();
+  // "Apply Now" on a dashboard offer opens the form with that loan type already chosen (/apply?type=business)
+  const [searchParams] = useSearchParams();
+  const startType = searchParams.get("type") ?? "";
   const [currentStep, setCurrentStep] = useState(1);
   const [documents, setDocuments] = useState<Partial<Record<DocType, File>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -152,7 +155,7 @@ export default function LoanApplication() {
     formState: { errors },
     watch,
     trigger,
-  } = useForm<LoanFormData>();
+  } = useForm<LoanFormData>({ defaultValues: { loanType: startType } });
 
   // Watch ID number and date of birth for relationship validation
   const watchedIdNumber = watch("idNumber");
