@@ -14,6 +14,20 @@ def loan_totals(loan: Loan) -> dict:
         "balance": round(max(total - paid, 0), 2),
     }
 
+def totals_after(loan: Loan, payment) -> dict:
+    """Paid and balance right after this payment: it and the repayments recorded before it count, later ones don't."""
+    paid = sum(
+        float(p.amount) for p in loan.payments
+        if p.payment_type == PaymentType.REPAYMENT and p.status == PaymentStatus.COMPLETED
+        and (p.created_at, p.id) <= (payment.created_at, payment.id)
+    )
+    total = float(loan.total_repayable)
+    return {
+        "total_repayable": round(total, 2),
+        "amount_paid": round(paid, 2),
+        "balance": round(max(total - paid, 0), 2),
+    }
+
 def update_loan_balance(loan: Loan) -> dict:
     """Store the new balance on the loan and mark it Paid Off when nothing is left."""
     totals = loan_totals(loan)

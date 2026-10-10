@@ -236,10 +236,10 @@ export default function ProofOfPayments() {
                         <div className="text-sm font-bold text-[#005B3F]">{proof.loanAmount}</div>
                         <div className="text-xs text-gray-500 font-medium mt-0.5">{proof.loanId}</div>
                         {proof.totals && (
-                          <div className="text-xs mt-1 whitespace-nowrap">
-                            <span className="text-gray-500">Paid {rand(proof.totals.amount_paid)}</span>
-                            <span className="text-gray-300"> · </span>
-                            <span className="font-bold text-[#111827]">Balance {rand(proof.totals.balance)}</span>
+                          <div className="text-xs mt-1">
+                            <div className="text-gray-500 whitespace-nowrap">Paid so far {rand(proof.totals.amount_paid)}</div>
+                            <div className="text-gray-500 mt-0.5">Balance after</div>
+                            <div className="font-bold text-[#111827] whitespace-nowrap">{rand(proof.totals.balance)}</div>
                           </div>
                         )}
                       </td>
