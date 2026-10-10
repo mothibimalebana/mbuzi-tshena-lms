@@ -285,6 +285,9 @@ def list_applications(
     status: Optional[str] = None,
     search: Optional[str] = None,
     filter: Optional[str] = Query(None, description="All | Pending Review | Auto-Approved | Flagged"),
+    ai_action: Optional[str] = None,
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin),
 ):
@@ -306,6 +309,15 @@ def list_applications(
         elif filter == "Flagged":
             q = q.filter(LoanApplication.ai_action == AIAction.FLAGGED)
 
+    if ai_action:
+        try:
+            q = q.filter(LoanApplication.ai_action == AIAction(ai_action))  # e.g. "Flagged" -> AIAction.FLAGGED
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Unknown AI action")
+    if min_amount is not None:
+        q = q.filter(LoanApplication.loan_amount >= min_amount)
+    if max_amount is not None:
+        q = q.filter(LoanApplication.loan_amount <= max_amount)
     if search:
         term = f"%{search}%"
         q = q.filter(

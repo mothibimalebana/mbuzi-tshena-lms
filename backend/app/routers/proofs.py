@@ -20,6 +20,7 @@ from app.config import settings
 from app.utils.file_store import store_file, restore_file
 from app.utils.risk_score import format_currency
 from app.utils.loan_balance import loan_totals, update_loan_balance
+from app.utils.reliability import save_reliability
 from app.routers.payments import generate_trx_id
 from app.utils.proof_check import run_proof_check
 
@@ -193,6 +194,7 @@ def review_proof(
     proof.status = review.status
     proof.admin_notes = review.admin_notes
     totals = update_loan_balance(loan) if loan else None
+    save_reliability(proof.user, db) 
 
     ref = proof.application.reference_number
     if review.status == ProofStatus.VERIFIED:

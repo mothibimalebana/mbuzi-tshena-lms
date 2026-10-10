@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from "react";
-import { Users, Search, Filter, X } from "lucide-react";
+import { Users, Search, Filter, X, Loader2 } from "lucide-react";
 import clsx from "clsx";
 
 interface BorrowerLoan {
@@ -17,12 +17,25 @@ interface Borrower {
   phone: string;
   joinedDate: string;
   loans: BorrowerLoan[];
+  reliabilityScore: number | null;
+  reliabilityStatus: string | null;
+  reliabilityRemarks: string | null;
+  reliabilityDate: string | null;
 }
 
 const API_URL = import.meta.env.VITE_API_URL;
 
 const STATUS_OPTIONS = ["All", "Pending", "Under Review", "Approved", "Rejected", "Disbursed", "Closed"];
 const LOAN_TYPE_OPTIONS = ["All", "personal", "business", "education", "home-improvement", "debt-consolidation", "emergency"];
+
+// Reliability score (SRS feature #2): backend/app/utils/reliability.py
+const RELIABILITY_OPTIONS = ["All", "Reliable", "Average", "At risk", "New", "Not scored"];
+const reliabilityStyles: Record<string, string> = {
+  Reliable: "bg-[#E5F2D9] text-[#005B3F] border-[#B4D330]/30",
+  Average: "bg-amber-50 text-amber-700 border-amber-100",
+  "At risk": "bg-red-50 text-red-700 border-red-100",
+  New: "bg-blue-50 text-blue-700 border-blue-100",
+};
 
 const statusStyles: Record<string, string> = {
   Pending: "bg-amber-50 text-amber-700 border-amber-100",
@@ -45,12 +58,14 @@ export default function BorrowersList() {
   const [filterLoanType, setFilterLoanType] = useState("All");
   const [filterMinScore, setFilterMinScore] = useState("");
   const [filterMaxScore, setFilterMaxScore] = useState("");
+  const [filterReliability, setFilterReliability] = useState("All");
+  const [analysing, setAnalysing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState("");
 
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    const loadBorrowers = async () => {
+  const loadBorrowers = async () => {
       try {
         setLoading(true);
         setError("");
@@ -75,6 +90,10 @@ export default function BorrowersList() {
             status: l.status,
             score: l.score ?? 0,
           })),
+          reliabilityScore: item.reliability_score,
+          reliabilityStatus: item.reliability_status,
+          reliabilityRemarks: item.reliability_remarks,
+          reliabilityDate: item.reliability_date,
         }));
         setBorrowers(mapped);
       } catch (err: any) {
@@ -83,8 +102,24 @@ export default function BorrowersList() {
         setLoading(false);
       }
     };
-    loadBorrowers();
-  }, []);
+  useEffect(() => { loadBorrowers(); }, []);
+
+  // "Run Batch Analysis": calculate every borrower's reliability score, then reload the list
+  const runBatchAnalysis = async () => {
+    setAnalysing(true);
+    setAnalysisResult("");
+    try {
+      const res = await fetch(`${API_URL}/api/admin/borrowers/score`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error();
+      const r = await res.json();
+      setAnalysisResult(`Scored ${r.scored} borrowers: ${r.Reliable} reliable, ${r.Average} average, ${r["At risk"]} at risk, ${r.New} new.`);
+      await loadBorrowers();
+    } catch {
+      setAnalysisResult("Batch analysis failed. Please try again.");
+    } finally {
+      setAnalysing(false);
+    }
+  };
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -95,23 +130,32 @@ export default function BorrowersList() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const hasFilters = filterStatus !== "All" || filterLoanType !== "All" || filterMinScore || filterMaxScore;
+  const hasFilters = filterStatus !== "All" || filterLoanType !== "All" || filterMinScore || filterMaxScore || filterReliability !== "All";
   const clearFilters = () => {
+    setFilterReliability("All");
     setFilterStatus("All");
     setFilterLoanType("All");
     setFilterMinScore("");
     setFilterMaxScore("");
   };
 
-  const filtered = useMemo(() => borrowers.filter(b => {
+  // Show only the loans that match the loan filters, and only borrowers who still have a matching loan
+  const filtered = useMemo(() => {
+    const loanFilterOn = filterStatus !== "All" || filterLoanType !== "All" || filterMinScore !== "" || filterMaxScore !== "";
+    const loanMatches = (l: BorrowerLoan) =>
+      (filterStatus === "All" || l.status === filterStatus) &&
+      (filterLoanType === "All" || l.loanType === filterLoanType) &&
+      (!filterMinScore || l.score >= Number(filterMinScore)) &&
+      (!filterMaxScore || l.score <= Number(filterMaxScore));
     const term = search.toLowerCase();
-    const matchesSearch = !search || b.name.toLowerCase().includes(term) || b.email.toLowerCase().includes(term) || b.loans.some(l => l.reference.toLowerCase().includes(term));
-    const matchesStatus = filterStatus === "All" || b.loans.some(l => l.status === filterStatus);
-    const matchesLoanType = filterLoanType === "All" || b.loans.some(l => l.loanType === filterLoanType);
-    const matchesMinScore = !filterMinScore || b.loans.some(l => l.score >= Number(filterMinScore));
-    const matchesMaxScore = !filterMaxScore || b.loans.some(l => l.score <= Number(filterMaxScore));
-    return matchesSearch && matchesStatus && matchesLoanType && matchesMinScore && matchesMaxScore;
-  }), [borrowers, search, filterStatus, filterLoanType, filterMinScore, filterMaxScore]);
+    return borrowers
+      .map(b => ({ ...b, loans: b.loans.filter(loanMatches) }))
+      .filter(b => {
+        const matchesSearch = !search || b.name.toLowerCase().includes(term) || b.email.toLowerCase().includes(term) || b.loans.some(l => l.reference.toLowerCase().includes(term));
+        const matchesReliability = filterReliability === "All" || (b.reliabilityStatus ?? "Not scored") === filterReliability;
+        return matchesSearch && matchesReliability && (!loanFilterOn || b.loans.length > 0);
+      });
+  }, [borrowers, search, filterStatus, filterLoanType, filterMinScore, filterMaxScore, filterReliability]);
 
   if (loading) {
     return (
@@ -167,8 +211,9 @@ export default function BorrowersList() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-[#111827] tracking-tight">Reliable Borrowers</h2>
-          <p className="text-gray-500 mt-1 font-medium">AI-identified low-risk customers for pre-approved offers.</p>
+          <h2 className="text-2xl font-bold text-[#111827] tracking-tight">Borrowers</h2>
+          <p className="text-gray-500 mt-1 font-medium">Reliability scores based on repayment behaviour. Run Batch Analysis to update them.</p>
+          {analysisResult && <p className="text-sm text-[#005B3F] font-bold mt-1">{analysisResult}</p>}
         </div>
         <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
           <div className="relative w-full sm:w-auto">
@@ -194,6 +239,18 @@ export default function BorrowersList() {
 
             {showFilterPanel && (
               <div ref={filterPanelRef} className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl border border-gray-200 shadow-xl p-4 z-20">
+                <div className="mb-4">
+                  <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block mb-2">Reliability</label>
+                  <div className="flex flex-wrap gap-2">
+                    {RELIABILITY_OPTIONS.map(s => (
+                      <button key={s} onClick={() => setFilterReliability(s)}
+                        className={clsx("px-3 py-1 rounded-full text-xs font-bold border transition-all",
+                          filterReliability === s ? "bg-[#005B3F] text-white border-[#005B3F]" : "bg-white text-gray-600 border-gray-200 hover:border-gray-300")}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="mb-4">
                   <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block mb-2">Status</label>
                   <div className="flex flex-wrap gap-2">
@@ -235,8 +292,10 @@ export default function BorrowersList() {
               </div>
             )}
           </div>
-          <button className="bg-[#005B3F] hover:bg-[#00432E] text-white px-5 py-2.5 rounded-lg font-bold transition-colors shadow-sm w-full sm:w-auto">
-            Run Batch Analysis
+          <button onClick={runBatchAnalysis} disabled={analysing}
+            className="bg-[#005B3F] hover:bg-[#00432E] disabled:opacity-60 text-white px-5 py-2.5 rounded-lg font-bold transition-colors shadow-sm w-full sm:w-auto flex items-center justify-center gap-2">
+            {analysing && <Loader2 className="w-4 h-4 animate-spin" />}
+            {analysing ? "Analysing…" : "Run Batch Analysis"}
           </button>
         </div>
       </div>
@@ -265,6 +324,7 @@ export default function BorrowersList() {
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Borrower</th>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Reliability</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Loan</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">AI Risk Score</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
@@ -278,6 +338,22 @@ export default function BorrowersList() {
                       <div className="font-bold text-[#111827]">{b.name}</div>
                       <div className="text-xs text-gray-500 mt-0.5 font-medium">{b.email} · {b.phone}</div>
                       <div className="text-xs text-gray-400 mt-0.5">{b.loans.length} loan{b.loans.length !== 1 ? "s" : ""}</div>
+                    </td>
+                    <td className="px-6 py-4 max-w-[240px]">
+                      {b.reliabilityStatus ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className={clsx("inline-block px-2.5 py-1 rounded-md text-xs font-bold border", reliabilityStyles[b.reliabilityStatus])}>
+                              {b.reliabilityStatus}
+                            </span>
+                            {b.reliabilityScore !== null && <span className="text-sm font-bold text-[#111827]">{b.reliabilityScore}</span>}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">{b.reliabilityRemarks}</div>
+                          <div className="text-xs text-gray-400 mt-0.5">Scored {b.reliabilityDate}</div>
+                        </>
+                      ) : (
+                        <span className="text-xs text-gray-400">Not scored yet</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 space-y-2">
                       {b.loans.length === 0 ? "—" : b.loans.map(l => (

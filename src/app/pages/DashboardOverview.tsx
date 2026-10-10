@@ -311,6 +311,7 @@ export default function DashboardOverview() {
             isPositive={!(stats?.trends?.active_loans ?? "").startsWith("-")}
             icon={TrendingUp}
             color="blue"
+            note="vs last week"
           />
           <StatCard
             title="Reliable Borrowers"
@@ -319,6 +320,7 @@ export default function DashboardOverview() {
             isPositive={!(stats?.trends?.borrowers ?? "").startsWith("-")}
             icon={Users}
             color="green"
+            note="vs last week"
           />
           <StatCard
             title="Avg. AI Risk Score"
@@ -327,14 +329,16 @@ export default function DashboardOverview() {
             isPositive={(stats?.trends?.risk_score ?? "").startsWith("-")}
             icon={CheckCircle2}
             color="indigo"
+            note="new applications, vs last week"
           />
           <StatCard
             title="Fraud Alerts Detected"
             value={stats?.fraud_alerts_count ?? "—"}
             trend={stats?.trends?.fraud ?? "—"}
-            isPositive={(stats?.trends?.fraud ?? "+0").startsWith("-")}
+            isPositive={(stats?.trends?.fraud ?? "0") === "0"}
             icon={AlertTriangle}
             color="red"
+            note="new alerts this week"
           />
         </div>
 
@@ -407,7 +411,10 @@ export default function DashboardOverview() {
 }
 
 /* ─── Stat Card Component ─────────────────────────────────────── */
-function StatCard({ title, value, trend, isPositive, icon: Icon, color }: any) {
+function StatCard({ title, value, trend, isPositive, icon: Icon, color, note }: any) {
+  // The arrow shows the direction of the change; the colour shows whether that is good (green) or bad (red)
+  const unchanged = ["0", "0%", "new", "—"].includes(String(trend));
+  const goingDown = String(trend).startsWith("-");
   const colorMap: Record<string, string> = {
     blue: "bg-blue-50 text-blue-700 border-blue-100",
     green: "bg-[#E5F2D9] text-[#005B3F] border-[#B4D330]/30",
@@ -421,14 +428,15 @@ function StatCard({ title, value, trend, isPositive, icon: Icon, color }: any) {
         <div className={`p-3 rounded-xl border ${colorMap[color]}`}>
           <Icon className="w-6 h-6" />
         </div>
-        <div className={`flex items-center gap-1 text-sm font-bold bg-gray-50 px-2 py-1 rounded-md ${isPositive ? "text-green-700" : "text-red-700"}`}>
-          {isPositive ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+        <div className={`flex items-center gap-1 text-sm font-bold bg-gray-50 px-2 py-1 rounded-md ${unchanged ? "text-gray-500" : isPositive ? "text-green-700" : "text-red-700"}`}>
+          {!unchanged && (goingDown ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />)}
           {trend}
         </div>
       </div>
       <div className="mt-5">
         <h4 className="text-sm font-semibold text-gray-500">{title}</h4>
         <div className="text-2xl font-bold text-[#111827] mt-1 tracking-tight">{value}</div>
+        {note && <div className="text-xs text-gray-400 font-medium mt-1">Change: {note}</div>}
       </div>
     </div>
   );

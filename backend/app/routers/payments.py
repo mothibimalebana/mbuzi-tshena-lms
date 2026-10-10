@@ -13,6 +13,7 @@ from app.schemas import (
 from app.auth import get_current_user, get_current_admin
 from app.utils.risk_score import format_currency, relative_date
 from app.utils.loan_balance import update_loan_balance
+from app.utils.reliability import save_reliability
 
 router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
@@ -52,6 +53,7 @@ def create_payment(
         if loan:
             db.refresh(loan)
             update_loan_balance(loan)
+            save_reliability(loan.user, db)
 
     db.commit()
     db.refresh(payment)
